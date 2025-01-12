@@ -1,0 +1,9 @@
+bokeh
+glueviz[recommended,qt]
+jupyterlab
+jupyterlab_myst
+jupytext
+myst-parser
+mystmd
+numpy
+pandas
