@@ -12,11 +12,19 @@ kernelspec:
   name: python3
 ---
 
-# Data Insights
+# Power prices visualised
 
-Tomorrow's price slots visualised according to the regions as defined on [Nordpoolgroup.com](
-https://data.nordpoolgroup.com/map?deliveryDate=latest&currency=SEK&market=DayAhead&mapDataType=Price&resolution=60
-)
+> [!important] This data is updated once a day around 13.00 UTC+1. Make sure to check the date.
+
+There's 2 graphs for each region:
+
+1. **Hourly Evolution of Electricity Prices**
+
+    This graph displays the hourly prices using a bar chart, providing a clear view of how electricity prices fluctuate throughout the day.
+
+2. **Average Price with Deviation**
+
+    This graph visualizes the average price for each time block using a bar chart, accompanied by markers that indicate the range between the minimum and maximum prices, giving a comprehensive view of the price distribution within each block.
 
 ```{code-cell} ipython3
 ---
@@ -32,13 +40,11 @@ from dataclasses import dataclass
 import pandas as pd
 import requests
 
-
 class Region(str, Enum):
     LULEA = "SE1"
     SUNDSVALL = "SE2"
     GOTEBORG = "SE3"
     MALMO = "SE4"
-
 
 @dataclass
 class Units:
@@ -125,20 +131,20 @@ class Fetcher:
     def fetch(self, regions: List[Region]) -> Dict[str, Any]:
         """Fetch data for the specified regions, using cache if available."""
         selected_areas = ",".join([region.value for region in regions])
-        
+
         # Check if data for these regions is already in the cache
         if selected_areas in self.cache:
             print("Using cached data")
             return self.cache[selected_areas]
-        
+
         # If no valid cache, fetch new data from the API
         print("Fetching new data")
-        tomorrow = (datetime.now() + timedelta(days=0)).strftime('%Y-%m-%d')
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
         url = f'https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices?date={tomorrow}&market=DayAhead&deliveryArea={selected_areas}&currency=SEK'
         response = requests.get(url)
         response.raise_for_status()  # Ensure proper error handling for HTTP issues
         data = response.json()
-        
+
         # Store the fetched data in cache
         self.cache[selected_areas] = data
         return data
@@ -207,7 +213,7 @@ class Visualizer:
         """Create visualization of hourly prices using a step plot."""
         import plotly.graph_objects as go
         import pandas as pd
-    
+
         fig = go.Figure()
 
         # Create a bar chart for hourly prices
@@ -373,4 +379,7 @@ price_analyzer.analyze(data, Region.LULEA)
 
 ---
 
-See the [README](../README.md) on why, what and how.
+> [!note]
+> The price slots visualised according to the regions as defined on [Nordpoolgroup.com](
+> https://data.nordpoolgroup.com/map?deliveryDate=latest&currency=SEK&market=DayAhead&mapDataType=Price&resolution=60
+> ).

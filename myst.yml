@@ -7,7 +7,7 @@ project:
     See [README.md](README.md) for more information.
   # keywords: []
   authors: ["Daneo Van Overloop"]
-  github: https://github.com/daneov/power-scheduler
+  github: https://github.com/daneov/power-data
   # To autogenerate a Table of Contents, run "myst init --write-toc"
 site:
   template: book-theme
