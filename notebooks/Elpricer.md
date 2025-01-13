@@ -15,7 +15,7 @@ kernelspec:
 # Data Insights
 
 Tomorrow's price slots visualised according to the regions as defined on [Nordpoolgroup.com](
-https://data.nordpoolgroup.com/map?deliveryDate=2025-01-12&currency=SEK&market=DayAhead&mapDataType=Price&resolution=60
+https://data.nordpoolgroup.com/map?deliveryDate=latest&currency=SEK&market=DayAhead&mapDataType=Price&resolution=60
 )
 
 ```{code-cell} ipython3
@@ -23,15 +23,15 @@ https://data.nordpoolgroup.com/map?deliveryDate=2025-01-12&currency=SEK&market=D
 editable: true
 slideshow:
   slide_type: ''
-tags: [remove-input]
+tags: [remove-cell]
 ---
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Dict, List, Any
 from dataclasses import dataclass
 import pandas as pd
-import matplotlib.pyplot as plt
 import requests
+
 
 class Region(str, Enum):
     LULEA = "SE1"
@@ -39,224 +39,271 @@ class Region(str, Enum):
     GOTEBORG = "SE3"
     MALMO = "SE4"
 
+
+@dataclass
+class Units:
+    """Centralized configuration for units."""
+    electricity: str = "öre/kWh"
+
 @dataclass
 class Labels:
-    """Centralized configuration for labels and units"""
-    unit: str = "öre/kWh"
-    price_column: str = f"Price ({unit})"
-    avg_price_column: str = f"Average Price ({unit})"
-    min_price_column: str = f"Min Price ({unit})"
-    max_price_column: str = f"Max Price ({unit})"
-    delivery_start: str = "Delivery Start"
-    delivery_end: str = "Delivery End"
-    block_name: str = "Block Name"
-    
-    # Plot titles and labels
-    hourly_title: str = "Hourly Day Ahead Prices for {area}"
-    block_title: str = "Average Prices for Blocks"
-    time_label: str = "Delivery Start Time"
-    price_label: str = f"Price ({unit})"
-    
-    # Legend labels
-    hourly_legend: str = "Hourly Prices"
-    block_avg_legend: str = "Average Price"
-    block_range_legend: str = "Min-Max Range"
-    
-    # Output message
-    cheapest_block_msg: str = "The cheapest block for region {area} is '{block}' with an average price of {price:.2f} {unit}"
+    """Centralized configuration for labels."""
+    units: Units
+
+    @property
+    def price_column(self) -> str:
+        return f"Price ({self.units.electricity})"
+
+    @property
+    def avg_price_column(self) -> str:
+        return f"Average Price ({self.units.electricity})"
+
+    @property
+    def min_price_column(self) -> str:
+        return f"Min Price ({self.units.electricity})"
+
+    @property
+    def max_price_column(self) -> str:
+        return f"Max Price ({self.units.electricity})"
+
+    @property
+    def delivery_start(self) -> str:
+        return "Delivery Start"
+
+    @property
+    def delivery_end(self) -> str:
+        return "Delivery End"
+
+    @property
+    def block_name(self) -> str:
+        return "Block Name"
+
+    @property
+    def hourly_title(self) -> str:
+        return "Hourly Day Ahead Prices for {area}"
+
+    @property
+    def block_title(self) -> str:
+        return "Average Prices for Blocks"
+
+    @property
+    def time_label(self) -> str:
+        return "Delivery Start Time"
+
+    @property
+    def price_label(self) -> str:
+        return f"Price ({self.units.electricity})"
+
+    @property
+    def hourly_legend(self) -> str:
+        return "Hourly Prices"
+
+    @property
+    def block_avg_legend(self) -> str:
+        return "Average Price"
+
+    @property
+    def block_range_legend(self) -> str:
+        return "Min-Max Range"
+
+    @property
+    def cheapest_block_msg(self) -> str:
+        return ("The cheapest block for region {area} is '{block}' with an average price of "
+                "{price:.2f} {unit}")
 
 @dataclass
 class PriceData:
-    """Container for processed price data"""
+    """Container for processed price data."""
     hourly_df: pd.DataFrame
     block_df: pd.DataFrame
     cheapest_block: Dict[str, float]
 
-def process_hourly_data(data: Dict[str, Any], chosen_area: str, labels: Labels) -> pd.DataFrame:
-    """
-    Process hourly electricity price entries.
-    
-    Args:
-        data: Raw data dictionary containing multiAreaEntries
-        chosen_area: Selected area code for price analysis
-        labels: Label configuration object
-    
-    Returns:
-        DataFrame with processed hourly price data
-    """
-    try:
-        hourly_entries = data['multiAreaEntries']
-        hourly_data = [
-            {
-                labels.delivery_start: entry['deliveryStart'],
-                labels.delivery_end: entry['deliveryEnd'],
-                labels.price_column: entry['entryPerArea'][chosen_area] / 10
-            }
-            for entry in hourly_entries
-        ]
+class Fetcher:
+    def __init__(self):
+        self.cache = {}
+
+    def fetch(self, regions: List[Region]) -> Dict[str, Any]:
+        """Fetch data for the specified regions, using cache if available."""
+        selected_areas = ",".join([region.value for region in regions])
         
-        df = pd.DataFrame(hourly_data)
-        df[labels.delivery_start] = pd.to_datetime(df[labels.delivery_start])
-        df[labels.delivery_end] = pd.to_datetime(df[labels.delivery_end])
-        return df
-    
-    except KeyError as e:
-        raise ValueError(f"Missing required data field: {str(e)}")
-    except Exception as e:
-        raise RuntimeError(f"Error processing hourly data: {str(e)}")
-
-def process_block_data(data: Dict[str, Any], chosen_area: str, labels: Labels) -> pd.DataFrame:
-    """
-    Process block price aggregates.
-    
-    Args:
-        data: Raw data dictionary containing blockPriceAggregates
-        chosen_area: Selected area code for price analysis
-        labels: Label configuration object
-    
-    Returns:
-        DataFrame with processed block price data
-    """
-    try:
-        block_aggregates = data['blockPriceAggregates']
-        block_data = [
-            {
-                labels.block_name: block['blockName'],
-                labels.avg_price_column: block['averagePricePerArea'][chosen_area]['average'] / 10,
-                labels.min_price_column: block['averagePricePerArea'][chosen_area]['min'] / 10,
-                labels.max_price_column: block['averagePricePerArea'][chosen_area]['max'] / 10
-            }
-            for block in block_aggregates
-        ]
-        return pd.DataFrame(block_data)
-    
-    except KeyError as e:
-        raise ValueError(f"Missing required data field: {str(e)}")
-    except Exception as e:
-        raise RuntimeError(f"Error processing block data: {str(e)}")
-
-def find_cheapest_block(block_df: pd.DataFrame, labels: Labels) -> Dict[str, Any]:
-    """
-    Identify the block with lowest average price.
-    
-    Args:
-        block_df: DataFrame containing block price data
-        labels: Label configuration object
-    
-    Returns:
-        Dictionary containing cheapest block information
-    """
-    return block_df.loc[block_df[labels.avg_price_column].idxmin()].to_dict()
-
-def plot_hourly_prices(hourly_df: pd.DataFrame, chosen_area: str, labels: Labels) -> None:
-    """
-    Create visualization of hourly prices.
-    
-    Args:
-        hourly_df: DataFrame containing hourly price data
-        chosen_area: Selected area code for labeling
-        labels: Label configuration object
-    """
-    plt.figure(figsize=(14, 7))
-    plt.plot(hourly_df[labels.delivery_start], hourly_df[labels.price_column], 
-             marker='o', label=labels.hourly_legend)
-    plt.title(labels.hourly_title.format(area=chosen_area))
-    plt.xlabel(labels.time_label)
-    plt.ylabel(labels.price_label)
-    plt.xticks(rotation=45)
-    plt.grid()
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-def plot_block_prices(block_df: pd.DataFrame, labels: Labels) -> None:
-    """
-    Create visualization of block price averages with error bars.
-    
-    Args:
-        block_df: DataFrame containing block price data
-        labels: Label configuration object
-    """
-    plt.figure(figsize=(10, 5))
-    plt.bar(block_df[labels.block_name], block_df[labels.avg_price_column], 
-            color='skyblue', label=labels.block_avg_legend)
-    
-    plt.errorbar(
-        block_df[labels.block_name],
-        block_df[labels.avg_price_column],
-        yerr=[
-            block_df[labels.avg_price_column] - block_df[labels.min_price_column],
-            block_df[labels.max_price_column] - block_df[labels.avg_price_column]
-        ],
-        fmt='o',
-        color='black',
-        label=labels.block_range_legend
-    )
-    
-    plt.title(labels.block_title)
-    plt.ylabel(labels.price_label)
-    plt.grid(axis='y')
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-def analyze_prices(data: Dict[str, Any], chosen_area: str, labels: Labels) -> PriceData:
-    """
-    Main function to analyze electricity prices.
-    
-    Args:
-        data: Raw data dictionary containing price information
-        chosen_area: Selected area code for analysis
-        labels: Label configuration object
-    
-    Returns:
-        PriceData object containing processed data and analysis results
-    """
-    hourly_df = process_hourly_data(data, chosen_area, labels)
-    block_df = process_block_data(data, chosen_area, labels)
-    cheapest_block = find_cheapest_block(block_df, labels)
-    
-    return PriceData(
-        hourly_df=hourly_df,
-        block_df=block_df,
-        cheapest_block=cheapest_block
-    )
-
-def process(data: Dict[str, Any], chosen_area: str) -> None:
-    """
-    Main execution function.
-    
-    Args:
-        data: Raw data dictionary containing price information
-        chosen_area: Selected area code for analysis
-    """
-    try:
-        # Initialize labels with desired unit
-        labels = Labels()
+        # Check if data for these regions is already in the cache
+        if selected_areas in self.cache:
+            print("Using cached data")
+            return self.cache[selected_areas]
         
-        # Process data and create visualizations
-        price_data = analyze_prices(data, chosen_area.value, labels)
-        plot_hourly_prices(price_data.hourly_df, chosen_area.name, labels)
-        plot_block_prices(price_data.block_df, labels)
+        # If no valid cache, fetch new data from the API
+        print("Fetching new data")
+        tomorrow = (datetime.now() + timedelta(days=0)).strftime('%Y-%m-%d')
+        url = f'https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices?date={tomorrow}&market=DayAhead&deliveryArea={selected_areas}&currency=SEK'
+        response = requests.get(url)
+        response.raise_for_status()  # Ensure proper error handling for HTTP issues
+        data = response.json()
         
-        # Print analysis results
-        cheapest = price_data.cheapest_block
-        print(labels.cheapest_block_msg.format(
-            area=chosen_area.name,
-            block=cheapest[labels.block_name],
-            price=cheapest[labels.avg_price_column],
-            unit=labels.unit
+        # Store the fetched data in cache
+        self.cache[selected_areas] = data
+        return data
+
+class PriceProcessor:
+    """Processes price data from raw format into DataFrames."""
+
+    def __init__(self, labels: Labels):
+        self.labels = labels
+
+    def process_hourly_data(self, data: Dict[str, Any], region: str) -> pd.DataFrame:
+        """Process hourly electricity price entries."""
+        try:
+            hourly_entries = data['multiAreaEntries']
+            hourly_data = [
+                {
+                    self.labels.delivery_start: entry['deliveryStart'],
+                    self.labels.delivery_end: entry['deliveryEnd'],
+                    self.labels.price_column: entry['entryPerArea'][region] / 10,
+                }
+                for entry in hourly_entries
+            ]
+
+            df = pd.DataFrame(hourly_data)
+            df[self.labels.delivery_start] = pd.to_datetime(df[self.labels.delivery_start], utc=True)
+            df[self.labels.delivery_end] = pd.to_datetime(df[self.labels.delivery_end], utc=True)
+
+            stockholm_tz = "Europe/Stockholm"
+            df[self.labels.delivery_start] = df[self.labels.delivery_start].dt.tz_convert(stockholm_tz)
+            df[self.labels.delivery_end] = df[self.labels.delivery_end].dt.tz_convert(stockholm_tz)
+
+            return df
+        except KeyError as e:
+            raise ValueError(f"Missing required data field: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Error processing hourly data: {e}")
+
+    def process_block_data(self, data: Dict[str, Any], region: str) -> pd.DataFrame:
+        """Process block price aggregates."""
+        try:
+            block_aggregates = data['blockPriceAggregates']
+            block_data = [
+                {
+                    self.labels.block_name: block['blockName'],
+                    self.labels.avg_price_column: block['averagePricePerArea'][region]['average'] / 10,
+                    self.labels.min_price_column: block['averagePricePerArea'][region]['min'] / 10,
+                    self.labels.max_price_column: block['averagePricePerArea'][region]['max'] / 10,
+                }
+                for block in block_aggregates
+            ]
+            return pd.DataFrame(block_data)
+        except KeyError as e:
+            raise ValueError(f"Missing required data field: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Error processing block data: {e}")
+
+    def find_cheapest_block(self, block_df: pd.DataFrame) -> Dict[str, Any]:
+        """Identify the block with the lowest average price."""
+        return block_df.loc[block_df[self.labels.avg_price_column].idxmin()].to_dict()
+
+class Visualizer:
+    """Handles visualization logic for price data."""
+
+    @staticmethod
+    def plot_hourly_prices(hourly_df: pd.DataFrame, chosen_area: str, labels: Labels) -> None:
+        """Create visualization of hourly prices using a step plot."""
+        import plotly.graph_objects as go
+        import pandas as pd
+    
+        fig = go.Figure()
+
+        # Create a bar chart for hourly prices
+        fig.add_trace(go.Bar(
+            x=hourly_df[labels.delivery_start],
+            y=hourly_df[labels.price_column],
+            name=labels.hourly_legend,
+            marker_color='skyblue'
         ))
-        
-    except Exception as e:
-        print(f"Error analyzing prices: {str(e)}")
 
-def fetch(regions: list[Region]):
-    selected_areas = ",".join([region.value for region in regions])
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-    url = f'https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices?date={tomorrow}&market=DayAhead&deliveryArea={selected_areas}&currency=SEK'
-    response = requests.get(url)
-    return response.json()
+        fig.update_layout(
+            title=labels.hourly_title.format(area=chosen_area),
+            xaxis_title=labels.time_label,
+            yaxis_title=labels.price_label,
+            xaxis_tickangle=45,
+            showlegend=True
+        )
+
+        fig.show()
+
+    @staticmethod
+    def plot_block_prices(block_df: pd.DataFrame, labels: Labels) -> None:
+        """Create visualization of block price averages with error bars."""
+        import plotly.graph_objects as go
+        import pandas as pd
+
+        fig = go.Figure()
+
+        # Calculate min and max range for error bars
+        min_price = block_df[labels.min_price_column].min()
+        max_price = block_df[labels.max_price_column].max()
+
+        # Create bar chart for block averages
+        fig.add_trace(go.Bar(
+            x=block_df[labels.block_name],
+            y=block_df[labels.avg_price_column],
+            name=labels.block_avg_legend,
+            marker_color='skyblue'
+        ))
+
+        # Add error bars, ensuring the average price is the center
+        fig.add_trace(go.Scatter(
+            x=block_df[labels.block_name],
+            y=block_df[labels.avg_price_column],
+            mode='markers',
+            name=labels.block_range_legend,
+            marker=dict(color='black'),
+            error_y=dict(
+                type='data',
+                symmetric=False,
+                array=block_df[labels.max_price_column] - block_df[labels.avg_price_column],  # Max - Avg for upper error
+                arrayminus=block_df[labels.avg_price_column] - block_df[labels.min_price_column]  # Avg - Min for lower error
+            )
+        ))
+
+        fig.update_layout(
+            title=labels.block_title,
+            xaxis_title=labels.block_name,
+            yaxis_title=labels.price_label,
+            showlegend=True,
+            yaxis=dict(
+                range=[min(min_price, block_df[labels.avg_price_column].min()), max(max_price, block_df[labels.avg_price_column].max())]
+            )
+        )
+
+        fig.show()
+
+class PriceAnalyzer:
+    """The main orchestrator for processing and visualizing price data."""
+
+    def __init__(self, processor: PriceProcessor, visualizer: Visualizer, labels: Labels):
+        self.processor = processor
+        self.visualizer = visualizer
+        self.labels = labels
+
+    def analyze(self, data: Dict[str, Any], region: Region):
+        """Main analysis workflow for a single region."""
+        try:
+            # Process the fetched data for hourly and block prices
+            hourly_price_df = self.processor.process_hourly_data(data, region)
+            block_price_df = self.processor.process_block_data(data, region)
+
+            # Visualize hourly prices and block prices
+            self.visualizer.plot_hourly_prices(hourly_price_df, region, self.labels)
+            self.visualizer.plot_block_prices(block_price_df, self.labels)
+
+            # Displaying the cheapest block information using visualization
+            cheapest = self.processor.find_cheapest_block(block_price_df)
+            # self.visualizer.visualize_cheapest_block(cheapest, region)
+
+        except Exception as e:
+            print(f"Error during analysis: {e}")
+
+labels = Labels(Units())
+visualizer = Visualizer()
+fetcher = Fetcher()
 ```
 
 ```{code-cell} ipython3
@@ -264,10 +311,12 @@ def fetch(regions: list[Region]):
 editable: true
 slideshow:
   slide_type: ''
-tags: [remove-input]
+tags: [remove-cell]
 ---
-regions = list(Region)
-data = fetch(regions)
+data = fetcher.fetch(list(Region))
+
+processor = PriceProcessor(labels=labels)
+price_analyzer = PriceAnalyzer(processor=processor, visualizer=visualizer, labels=labels)
 ```
 
 +++ {"editable": true, "slideshow": {"slide_type": ""}}
@@ -279,9 +328,8 @@ data = fetch(regions)
 editable: true
 slideshow:
   slide_type: ''
-tags: [remove-input]
 ---
-process(data, Region.MALMO)
+price_analyzer.analyze(data, Region.MALMO)
 ```
 
 +++ {"editable": true, "slideshow": {"slide_type": ""}}
@@ -293,9 +341,8 @@ process(data, Region.MALMO)
 editable: true
 slideshow:
   slide_type: ''
-tags: [remove-input]
 ---
-process(data, Region.GOTEBORG)
+price_analyzer.analyze(data, Region.GOTEBORG)
 ```
 
 +++ {"editable": true, "slideshow": {"slide_type": ""}}
@@ -307,9 +354,8 @@ process(data, Region.GOTEBORG)
 editable: true
 slideshow:
   slide_type: ''
-tags: [remove-input]
 ---
-process(data, Region.SUNDSVALL)
+price_analyzer.analyze(data, Region.SUNDSVALL)
 ```
 
 +++ {"editable": true, "slideshow": {"slide_type": ""}}
@@ -321,9 +367,8 @@ process(data, Region.SUNDSVALL)
 editable: true
 slideshow:
   slide_type: ''
-tags: [remove-input]
 ---
-process(data, Region.LULEA)
+price_analyzer.analyze(data, Region.LULEA)
 ```
 
 ---

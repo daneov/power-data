@@ -7,3 +7,4 @@ myst-parser
 mystmd
 numpy
 pandas
+plotly
